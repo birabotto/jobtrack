@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition, useSyncExternalStore } from "react";
 import Link from "next/link";
 import {
     BriefcaseBusiness,
@@ -17,6 +17,7 @@ import {
     Check,
     ArrowUpRight,
     X,
+    History,
 } from "lucide-react";
 
 import {
@@ -41,11 +42,58 @@ type FollowUp = {
     completed_at: string | null;
 };
 
+type FollowUpFilter = "All" | "Pending" | "Overdue" | "Completed";
+
 function formatDate(value: string) {
     return new Intl.DateTimeFormat("en-CA", {
         dateStyle: "medium",
         timeStyle: "short",
     }).format(new Date(value));
+}
+
+// Relógio externo: atualiza a cada minuto sem chamar
+// setState diretamente dentro de um useEffect.
+let currentTime = 0;
+let clockInterval: ReturnType<typeof setInterval> | null = null;
+const clockListeners = new Set<() => void>();
+
+function subscribeToClock(callback: () => void) {
+    clockListeners.add(callback);
+
+    if (clockInterval === null) {
+        currentTime = Date.now();
+
+        clockInterval = setInterval(() => {
+            currentTime = Date.now();
+
+            clockListeners.forEach((listener) => listener());
+        }, 60_000);
+    }
+
+    return () => {
+        clockListeners.delete(callback);
+
+        if (clockListeners.size === 0 && clockInterval !== null) {
+            clearInterval(clockInterval);
+            clockInterval = null;
+        }
+    };
+}
+
+function getClockSnapshot() {
+    return currentTime;
+}
+
+function getServerClockSnapshot() {
+    return 0;
+}
+
+function useCurrentTime() {
+    return useSyncExternalStore(
+        subscribeToClock,
+        getClockSnapshot,
+        getServerClockSnapshot
+    );
 }
 
 export default function FollowUpsDashboard({
@@ -58,19 +106,13 @@ export default function FollowUpsDashboard({
     const [showForm, setShowForm] = useState(false);
     const [pending, startTransition] = useTransition();
     const [error, setError] = useState("");
-    const [filter, setFilter] = useState<
-        "All" | "Pending" | "Overdue" | "Completed"
-    >("All");
+    const [filter, setFilter] = useState<FollowUpFilter>("All");
 
     const [selectedApplication, setSelectedApplication] = useState(
         applications[0]?.id ?? ""
     );
 
-    const [now, setNow] = useState<number | null>(null);
-
-    useEffect(() => {
-        setNow(Date.now());
-    }, []);
+    const now = useCurrentTime();
 
     const pendingItems = followUps.filter(
         (item) => item.status === "Pending"
@@ -78,7 +120,7 @@ export default function FollowUpsDashboard({
 
     const overdueItems = pendingItems.filter(
         (item) =>
-            now !== null &&
+            now > 0 &&
             new Date(item.due_at).getTime() < now
     );
 
@@ -87,13 +129,21 @@ export default function FollowUpsDashboard({
     );
 
     const filteredItems = followUps.filter((item) => {
-        if (filter === "All") return true;
-        if (filter === "Pending") return item.status === "Pending";
-        if (filter === "Completed") return item.status === "Completed";
+        if (filter === "All") {
+            return true;
+        }
+
+        if (filter === "Pending") {
+            return item.status === "Pending";
+        }
+
+        if (filter === "Completed") {
+            return item.status === "Completed";
+        }
 
         return (
             item.status === "Pending" &&
-            now !== null &&
+            now > 0 &&
             new Date(item.due_at).getTime() < now
         );
     });
@@ -174,10 +224,19 @@ export default function FollowUpsDashboard({
 
                     <Link
                         href="/follow-ups"
+                        aria-current="page"
                         className="flex w-full items-center gap-3 rounded-xl bg-emerald-500/10 px-4 py-3 font-medium text-emerald-400"
                     >
                         <CalendarDays size={19} />
                         <span>Follow-ups</span>
+                    </Link>
+
+                    <Link
+                        href="/history"
+                        className="flex w-full items-center gap-3 rounded-xl px-4 py-3 font-medium text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
+                    >
+                        <History size={19} />
+                        <span>History</span>
                     </Link>
                 </nav>
 
@@ -314,6 +373,7 @@ export default function FollowUpsDashboard({
 
                             <label className="grid gap-2 text-sm font-medium text-slate-300">
                                 Application
+
                                 <select
                                     name="application_id"
                                     required
@@ -333,6 +393,7 @@ export default function FollowUpsDashboard({
 
                             <label className="grid gap-2 text-sm font-medium text-slate-300">
                                 Date and Time
+
                                 <input
                                     name="due_at"
                                     type="datetime-local"
@@ -343,6 +404,7 @@ export default function FollowUpsDashboard({
 
                             <label className="grid gap-2 text-sm font-medium text-slate-300 sm:col-span-2">
                                 Notes
+
                                 <textarea
                                     name="notes"
                                     maxLength={2000}
@@ -363,10 +425,14 @@ export default function FollowUpsDashboard({
 
                                 <button
                                     type="submit"
-                                    disabled={pending || applications.length === 0}
+                                    disabled={
+                                        pending || applications.length === 0
+                                    }
                                     className="rounded-xl bg-emerald-500 px-5 py-3 font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-50"
                                 >
-                                    {pending ? "Saving..." : "Save Follow-up"}
+                                    {pending
+                                        ? "Saving..."
+                                        : "Save Follow-up"}
                                 </button>
                             </div>
 
@@ -404,6 +470,7 @@ export default function FollowUpsDashboard({
                                         key={option}
                                         type="button"
                                         onClick={() => setFilter(option)}
+                                        aria-pressed={filter === option}
                                         className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${filter === option
                                                 ? "bg-emerald-500 text-slate-950"
                                                 : "bg-slate-800 text-slate-400 hover:text-white"
@@ -441,7 +508,7 @@ export default function FollowUpsDashboard({
 
                                     const isOverdue =
                                         item.status === "Pending" &&
-                                        now !== null &&
+                                        now > 0 &&
                                         new Date(item.due_at).getTime() < now;
 
                                     return (
