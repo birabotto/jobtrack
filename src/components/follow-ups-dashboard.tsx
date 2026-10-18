@@ -4,6 +4,13 @@
 import { useState, useTransition, useSyncExternalStore } from "react";
 import Link from "next/link";
 import {
+    filterFollowUps,
+    getFollowUpStats,
+    isOverdue,
+    type FollowUp,
+    type FollowUpFilter,
+} from "@/lib/follow-ups";
+import {
     BriefcaseBusiness,
     LayoutDashboard,
     CalendarDays,
@@ -32,17 +39,6 @@ type Application = {
     company: string;
     position: string;
 };
-
-type FollowUp = {
-    id: string;
-    application_id: string;
-    due_at: string;
-    status: string;
-    notes: string | null;
-    completed_at: string | null;
-};
-
-type FollowUpFilter = "All" | "Pending" | "Overdue" | "Completed";
 
 function formatDate(value: string) {
     return new Intl.DateTimeFormat("en-CA", {
@@ -114,39 +110,13 @@ export default function FollowUpsDashboard({
 
     const now = useCurrentTime();
 
-    const pendingItems = followUps.filter(
-        (item) => item.status === "Pending"
+    const comparisonTime = now > 0 ? now : Number.NaN;
+    const followUpStats = getFollowUpStats(followUps, comparisonTime);
+    const filteredItems = filterFollowUps(
+        followUps,
+        filter,
+        comparisonTime
     );
-
-    const overdueItems = pendingItems.filter(
-        (item) =>
-            now > 0 &&
-            new Date(item.due_at).getTime() < now
-    );
-
-    const completedItems = followUps.filter(
-        (item) => item.status === "Completed"
-    );
-
-    const filteredItems = followUps.filter((item) => {
-        if (filter === "All") {
-            return true;
-        }
-
-        if (filter === "Pending") {
-            return item.status === "Pending";
-        }
-
-        if (filter === "Completed") {
-            return item.status === "Completed";
-        }
-
-        return (
-            item.status === "Pending" &&
-            now > 0 &&
-            new Date(item.due_at).getTime() < now
-        );
-    });
 
     function runAction(action: () => Promise<void>) {
         setError("");
@@ -171,21 +141,21 @@ export default function FollowUpsDashboard({
     const stats = [
         {
             label: "Pending Follow-ups",
-            value: pendingItems.length,
+            value: followUpStats.pending,
             icon: Clock3,
             color: "text-amber-400",
             background: "bg-amber-500/10",
         },
         {
             label: "Overdue",
-            value: overdueItems.length,
+            value: followUpStats.overdue,
             icon: AlertCircle,
             color: "text-red-400",
             background: "bg-red-500/10",
         },
         {
             label: "Completed",
-            value: completedItems.length,
+            value: followUpStats.completed,
             icon: CheckCircle2,
             color: "text-emerald-400",
             background: "bg-emerald-500/10",
@@ -506,10 +476,10 @@ export default function FollowUpsDashboard({
                                         item.application_id
                                     );
 
-                                    const isOverdue =
-                                        item.status === "Pending" &&
-                                        now > 0 &&
-                                        new Date(item.due_at).getTime() < now;
+                                    const itemIsOverdue = isOverdue(
+                                        item,
+                                        comparisonTime
+                                    );
 
                                     return (
                                         <div
@@ -539,14 +509,14 @@ export default function FollowUpsDashboard({
                                                     </p>
 
                                                     <span
-                                                        className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${isOverdue
+                                                        className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${itemIsOverdue
                                                                 ? "bg-red-500/10 text-red-400"
                                                                 : item.status === "Completed"
                                                                     ? "bg-emerald-500/10 text-emerald-400"
                                                                     : "bg-amber-500/10 text-amber-400"
                                                             }`}
                                                     >
-                                                        {isOverdue
+                                                        {itemIsOverdue
                                                             ? "Overdue"
                                                             : item.status}
                                                     </span>
